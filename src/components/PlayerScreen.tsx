@@ -270,9 +270,13 @@ export function PlayerScreen({ book, onBack }: PlayerScreenProps) {
             </div>
           </div>
 
-          {/* Timeline — passes currentTime so it scrolls during playback */}
+          {/* Timeline — currentTime moves the playhead, duration sizes the canvas */}
           <div className="pt-4 border-t border-border">
-            <RecordingTimeline elapsed={currentTime} markers={book.markers} />
+            <RecordingTimeline
+              elapsed={currentTime}
+              markers={book.markers}
+              duration={book.duration}
+            />
           </div>
         </>
       )}
