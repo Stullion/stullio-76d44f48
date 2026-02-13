@@ -1,7 +1,26 @@
-import { Book } from "@/types/book";
+/**
+ * storage.ts
+ * Handles book metadata in localStorage.
+ * Audio blobs are stored separately in IndexedDB via audio-storage.ts.
+ */
 
-const BOOKS_KEY = "stullio_books";
-const SETTINGS_KEY = "stullio_settings";
+import { Book } from "@/types/book";
+import { deleteAudioBlob } from "@/lib/audio-storage";
+
+const BOOKS_KEY = "stullio-books";
+const SETTINGS_KEY = "stullio-settings";
+
+export interface Settings {
+  pageTurnVolume: number; // 0–100
+}
+
+const DEFAULT_SETTINGS: Settings = {
+  pageTurnVolume: 80,
+};
+
+export function generateId(): string {
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
 
 export function getBooks(): Book[] {
   try {
@@ -12,15 +31,22 @@ export function getBooks(): Book[] {
   }
 }
 
-export function saveBook(book: Book): void {
+export function saveBook(book: Omit<Book, "audioBlob">): void {
   const books = getBooks();
-  books.unshift(book);
+  const idx = books.findIndex((b) => b.id === book.id);
+  if (idx >= 0) {
+    books[idx] = book;
+  } else {
+    books.unshift(book);
+  }
   localStorage.setItem(BOOKS_KEY, JSON.stringify(books));
 }
 
 export function deleteBook(id: string): void {
   const books = getBooks().filter((b) => b.id !== id);
   localStorage.setItem(BOOKS_KEY, JSON.stringify(books));
+  // Also remove the audio blob from IndexedDB (fire-and-forget)
+  deleteAudioBlob(id).catch(() => {});
 }
 
 export function renameBook(id: string, newTitle: string): void {
@@ -30,19 +56,16 @@ export function renameBook(id: string, newTitle: string): void {
   localStorage.setItem(BOOKS_KEY, JSON.stringify(books));
 }
 
-export function getSettings(): { pageTurnVolume: number } {
+export function getSettings(): Settings {
   try {
     const raw = localStorage.getItem(SETTINGS_KEY);
-    return raw ? JSON.parse(raw) : { pageTurnVolume: 80 };
+    return raw ? { ...DEFAULT_SETTINGS, ...JSON.parse(raw) } : DEFAULT_SETTINGS;
   } catch {
-    return { pageTurnVolume: 80 };
+    return DEFAULT_SETTINGS;
   }
 }
 
-export function saveSettings(settings: { pageTurnVolume: number }): void {
-  localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
-}
-
-export function generateId(): string {
-  return Date.now().toString(36) + Math.random().toString(36).slice(2);
+export function saveSettings(partial: Partial<Settings>): void {
+  const current = getSettings();
+  localStorage.setItem(SETTINGS_KEY, JSON.stringify({ ...current, ...partial }));
 }
