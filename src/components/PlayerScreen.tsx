@@ -27,13 +27,17 @@ export function PlayerScreen({ book, onBack }: PlayerScreenProps) {
   const [delaying, setDelaying] = useState(true);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [blobUrl, setBlobUrl] = useState<string | null>(null);
-  // Track the last time we checked for markers to catch any skipped seconds
   const lastTimeRef = useRef<number>(-1);
 
-  // Load audio blob from IndexedDB on mount
+  // Load audio blob from IndexedDB and set directly on the audio element.
+  // We set audio.src imperatively rather than via JSX so the element is
+  // always in the DOM and event listeners attach correctly.
   useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+
     let url: string | null = null;
+
     getAudioBlob(book.id)
       .then((blob) => {
         if (!blob) {
@@ -42,7 +46,8 @@ export function PlayerScreen({ book, onBack }: PlayerScreenProps) {
           return;
         }
         url = URL.createObjectURL(blob);
-        setBlobUrl(url);
+        audio.src = url;
+        audio.load();
         setLoading(false);
       })
       .catch(() => {
@@ -52,32 +57,21 @@ export function PlayerScreen({ book, onBack }: PlayerScreenProps) {
 
     return () => {
       if (url) URL.revokeObjectURL(url);
+      if (audio) audio.src = "";
     };
   }, [book.id]);
 
-  // 2-second delay before playback starts (per spec)
-  useEffect(() => {
-    if (loading || error) return;
-    const timer = setTimeout(() => {
-      setDelaying(false);
-      audioRef.current?.play().catch(() => {});
-      setIsPlaying(true);
-    }, 2000);
-    return () => clearTimeout(timer);
-  }, [loading, error]);
-
-  // Sync currentTime and fire page-turn sounds
+  // Attach all audio event listeners once on mount.
+  // The audio element is always in the DOM so this always succeeds.
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
 
     const onTimeUpdate = () => {
-      const t = audio.currentTime;
-      const tFloor = Math.floor(t);
+      const tFloor = Math.floor(audio.currentTime);
       setCurrentTime(tFloor);
 
-      // Fire page-turn sounds for ANY marker timestamp we've passed since last check
-      // This range check catches markers even if timeupdate skips an exact integer second
+      // Fire page-turn sounds for any marker we passed since the last tick
       const prev = lastTimeRef.current;
       if (prev >= 0 && tFloor > prev) {
         const settings = getSettings();
@@ -100,9 +94,10 @@ export function PlayerScreen({ book, onBack }: PlayerScreenProps) {
 
     const onPlay = () => setIsPlaying(true);
     const onPause = () => setIsPlaying(false);
-    // Reset marker tracking on seek
+
     const onSeeked = () => {
       lastTimeRef.current = Math.floor(audio.currentTime) - 1;
+      setCurrentTime(Math.floor(audio.currentTime));
     };
 
     audio.addEventListener("timeupdate", onTimeUpdate);
@@ -119,6 +114,16 @@ export function PlayerScreen({ book, onBack }: PlayerScreenProps) {
       audio.removeEventListener("seeked", onSeeked);
     };
   }, [book]);
+
+  // 2-second delay before playback starts (only fires after loading completes)
+  useEffect(() => {
+    if (loading || error) return;
+    const timer = setTimeout(() => {
+      setDelaying(false);
+      audioRef.current?.play().catch(() => {});
+    }, 2000);
+    return () => clearTimeout(timer);
+  }, [loading, error]);
 
   const togglePlay = useCallback(() => {
     const audio = audioRef.current;
@@ -169,8 +174,8 @@ export function PlayerScreen({ book, onBack }: PlayerScreenProps) {
 
   return (
     <div className="flex flex-col h-full bg-background px-6 pt-6 pb-6">
-      {/* Hidden audio element */}
-      {blobUrl && <audio ref={audioRef} src={blobUrl} preload="auto" />}
+      {/* Audio element is ALWAYS in the DOM — never conditionally rendered */}
+      <audio ref={audioRef} preload="auto" />
 
       {/* Header */}
       <div className="flex items-center gap-3 mb-8">
@@ -270,7 +275,7 @@ export function PlayerScreen({ book, onBack }: PlayerScreenProps) {
             </div>
           </div>
 
-          {/* Timeline — currentTime moves the playhead, duration sizes the canvas */}
+          {/* Timeline — elapsed=currentTime moves playhead, duration sizes the canvas */}
           <div className="pt-4 border-t border-border">
             <RecordingTimeline
               elapsed={currentTime}
