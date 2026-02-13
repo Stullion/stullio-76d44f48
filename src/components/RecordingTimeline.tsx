@@ -1,23 +1,31 @@
 import { useEffect, useRef } from "react";
 import { Marker } from "@/types/book";
 
-interface RecordingTimelineProps {
-  elapsed: number;
+interface RecordingTimelieProps {
+  elapsed: number;    // current playhead position (seconds)
   markers: Marker[];
+  duration?: number;  // total recording duration — pass this in player mode
+                      // so the canvas is sized correctly regardless of playhead position
 }
 
-export function RecordingTimeline({ elapsed, markers }: RecordingTimelineProps) {
+export function RecordingTimeline({ elapsed, markers, duration }: RecordingTimelieProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const pxPerSecond = 4;
-  const totalWidth = Math.max(elapsed * pxPerSecond + 80, 300);
+  // Canvas always sized to the full duration (or elapsed if no duration given, for recording mode)
+  const canvasSeconds = duration !== undefined ? duration : elapsed;
+  const totalWidth = Math.max(canvasSeconds * pxPerSecond + 80, 300);
 
+  // Auto-scroll to keep the playhead visible
   useEffect(() => {
     if (scrollRef.current) {
-      scrollRef.current.scrollLeft = scrollRef.current.scrollWidth;
+      const playheadX = elapsed * pxPerSecond;
+      const containerWidth = scrollRef.current.clientWidth;
+      // Scroll so playhead is near the right edge with some padding
+      scrollRef.current.scrollLeft = Math.max(0, playheadX - containerWidth + 60);
     }
   }, [elapsed]);
 
-  const tickCount = Math.floor(elapsed / 15) + 1;
+  const tickCount = Math.floor(canvasSeconds / 15) + 2;
 
   return (
     <div
@@ -32,6 +40,7 @@ export function RecordingTimeline({ elapsed, markers }: RecordingTimelineProps) 
         {/* Tick marks every 15 seconds */}
         {Array.from({ length: tickCount }).map((_, i) => {
           const x = i * 15 * pxPerSecond;
+          if (x > totalWidth) return null;
           return (
             <div
               key={`tick-${i}`}
@@ -68,7 +77,7 @@ export function RecordingTimeline({ elapsed, markers }: RecordingTimelineProps) 
           );
         })}
 
-        {/* Current position */}
+        {/* Playhead */}
         <div
           className="absolute bottom-0 w-0.5 h-12 bg-destructive rounded-full"
           style={{ left: `${elapsed * pxPerSecond}px` }}
