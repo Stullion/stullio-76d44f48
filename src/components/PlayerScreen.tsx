@@ -28,8 +28,8 @@ export function PlayerScreen({ book, onBack }: PlayerScreenProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
-  // Track which page-turn markers have already played to avoid double-firing
-  const firedMarkersRef = useRef<Set<number>>(new Set());
+  // Track the last time we checked for markers to catch any skipped seconds
+  const lastTimeRef = useRef<number>(-1);
 
   // Load audio blob from IndexedDB on mount
   useEffect(() => {
@@ -66,62 +66,66 @@ export function PlayerScreen({ book, onBack }: PlayerScreenProps) {
     return () => clearTimeout(timer);
   }, [loading, error]);
 
-  // Sync currentTime from the audio element
+  // Sync currentTime and fire page-turn sounds
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
 
     const onTimeUpdate = () => {
-      const t = Math.floor(audio.currentTime);
-      setCurrentTime(t);
+      const t = audio.currentTime;
+      const tFloor = Math.floor(t);
+      setCurrentTime(tFloor);
 
-      // Fire page-turn sounds at marker timestamps
-      const settings = getSettings();
-      book.markers
-        .filter((m) => m.type === "page-turn")
-        .forEach((m) => {
-          if (t === m.timestamp && !firedMarkersRef.current.has(m.timestamp)) {
-            firedMarkersRef.current.add(m.timestamp);
-            playPageTurnSound(book.pageTurnSound, settings.pageTurnVolume);
-          }
-        });
+      // Fire page-turn sounds for ANY marker timestamp we've passed since last check
+      // This range check catches markers even if timeupdate skips an exact integer second
+      const prev = lastTimeRef.current;
+      if (prev >= 0 && tFloor > prev) {
+        const settings = getSettings();
+        book.markers
+          .filter((m) => m.type === "page-turn")
+          .forEach((m) => {
+            if (m.timestamp > prev && m.timestamp <= tFloor) {
+              playPageTurnSound(book.pageTurnSound, settings.pageTurnVolume);
+            }
+          });
+      }
+      lastTimeRef.current = tFloor;
     };
 
     const onEnded = () => {
       setIsPlaying(false);
       setCurrentTime(0);
-      firedMarkersRef.current.clear();
+      lastTimeRef.current = -1;
     };
 
     const onPlay = () => setIsPlaying(true);
     const onPause = () => setIsPlaying(false);
+    // Reset marker tracking on seek
+    const onSeeked = () => {
+      lastTimeRef.current = Math.floor(audio.currentTime) - 1;
+    };
 
     audio.addEventListener("timeupdate", onTimeUpdate);
     audio.addEventListener("ended", onEnded);
     audio.addEventListener("play", onPlay);
     audio.addEventListener("pause", onPause);
+    audio.addEventListener("seeked", onSeeked);
 
     return () => {
       audio.removeEventListener("timeupdate", onTimeUpdate);
       audio.removeEventListener("ended", onEnded);
       audio.removeEventListener("play", onPlay);
       audio.removeEventListener("pause", onPause);
+      audio.removeEventListener("seeked", onSeeked);
     };
   }, [book]);
-
-  // Reset fired markers when seeking backward past them
-  useEffect(() => {
-    firedMarkersRef.current = new Set(
-      Array.from(firedMarkersRef.current).filter((t) => t <= currentTime)
-    );
-  }, [currentTime]);
 
   const togglePlay = useCallback(() => {
     const audio = audioRef.current;
     if (!audio) return;
-    if (audio.ended || audio.currentTime >= audio.duration) {
+    if (audio.ended || audio.currentTime >= (audio.duration || 0)) {
       audio.currentTime = 0;
-      firedMarkersRef.current.clear();
+      lastTimeRef.current = -1;
     }
     if (audio.paused) {
       audio.play().catch(() => {});
@@ -266,9 +270,9 @@ export function PlayerScreen({ book, onBack }: PlayerScreenProps) {
             </div>
           </div>
 
-          {/* Timeline */}
+          {/* Timeline — passes currentTime so it scrolls during playback */}
           <div className="pt-4 border-t border-border">
-            <RecordingTimeline elapsed={book.duration} markers={book.markers} />
+            <RecordingTimeline elapsed={currentTime} markers={book.markers} />
           </div>
         </>
       )}
