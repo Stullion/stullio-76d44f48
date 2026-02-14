@@ -3,7 +3,7 @@ import { Book } from "@/types/book";
 import { RecordingTimeline } from "@/components/RecordingTimeline";
 import { getAudioBlob } from "@/lib/audio-storage";
 import { getSettings } from "@/lib/storage";
-import { playPageTurnSound } from "@/lib/page-turn-sounds";
+import { playPageTurnSound, warmUpAudioContext } from "@/lib/page-turn-sounds";
 import {
   ArrowLeft,
   Play,
@@ -24,18 +24,15 @@ export function PlayerScreen({ book, onBack }: PlayerScreenProps) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
-  const [delaying, setDelaying] = useState(true);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [hasStarted, setHasStarted] = useState(false); // user has tapped play at least once
   const lastTimeRef = useRef<number>(-1);
 
-  // Load audio blob from IndexedDB and set directly on the audio element.
-  // We set audio.src imperatively rather than via JSX so the element is
-  // always in the DOM and event listeners attach correctly.
+  // Load audio blob from IndexedDB directly onto the audio element
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
-
     let url: string | null = null;
 
     getAudioBlob(book.id)
@@ -61,8 +58,7 @@ export function PlayerScreen({ book, onBack }: PlayerScreenProps) {
     };
   }, [book.id]);
 
-  // Attach all audio event listeners once on mount.
-  // The audio element is always in the DOM so this always succeeds.
+  // Attach audio event listeners once on mount
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
@@ -71,7 +67,6 @@ export function PlayerScreen({ book, onBack }: PlayerScreenProps) {
       const tFloor = Math.floor(audio.currentTime);
       setCurrentTime(tFloor);
 
-      // Fire page-turn sounds for any marker we passed since the last tick
       const prev = lastTimeRef.current;
       if (prev >= 0 && tFloor > prev) {
         const settings = getSettings();
@@ -94,7 +89,6 @@ export function PlayerScreen({ book, onBack }: PlayerScreenProps) {
 
     const onPlay = () => setIsPlaying(true);
     const onPause = () => setIsPlaying(false);
-
     const onSeeked = () => {
       lastTimeRef.current = Math.floor(audio.currentTime) - 1;
       setCurrentTime(Math.floor(audio.currentTime));
@@ -115,29 +109,30 @@ export function PlayerScreen({ book, onBack }: PlayerScreenProps) {
     };
   }, [book]);
 
-  // 2-second delay before playback starts (only fires after loading completes)
-  useEffect(() => {
-    if (loading || error) return;
-    const timer = setTimeout(() => {
-      setDelaying(false);
-      audioRef.current?.play().catch(() => {});
-    }, 2000);
-    return () => clearTimeout(timer);
-  }, [loading, error]);
-
+  // togglePlay is the ONLY place audio starts — always from a direct user tap
   const togglePlay = useCallback(() => {
     const audio = audioRef.current;
     if (!audio) return;
+
+    // Warm up AudioContext synchronously inside this gesture handler
+    // This MUST happen in the same call stack as the user tap
+    warmUpAudioContext();
+
+    if (!hasStarted) {
+      setHasStarted(true);
+    }
+
     if (audio.ended || audio.currentTime >= (audio.duration || 0)) {
       audio.currentTime = 0;
       lastTimeRef.current = -1;
     }
+
     if (audio.paused) {
       audio.play().catch(() => {});
     } else {
       audio.pause();
     }
-  }, []);
+  }, [hasStarted]);
 
   const skip = useCallback((seconds: number) => {
     const audio = audioRef.current;
@@ -174,7 +169,7 @@ export function PlayerScreen({ book, onBack }: PlayerScreenProps) {
 
   return (
     <div className="flex flex-col h-full bg-background px-6 pt-6 pb-6">
-      {/* Audio element is ALWAYS in the DOM — never conditionally rendered */}
+      {/* Audio element always in the DOM */}
       <audio ref={audioRef} preload="auto" />
 
       {/* Header */}
@@ -190,7 +185,7 @@ export function PlayerScreen({ book, onBack }: PlayerScreenProps) {
         </h1>
       </div>
 
-      {/* Loading state */}
+      {/* Loading */}
       {loading && (
         <div className="flex-1 flex flex-col items-center justify-center gap-3">
           <Loader2 className="w-8 h-8 text-primary animate-spin" />
@@ -198,7 +193,7 @@ export function PlayerScreen({ book, onBack }: PlayerScreenProps) {
         </div>
       )}
 
-      {/* Error state */}
+      {/* Error */}
       {error && (
         <div className="flex-1 flex flex-col items-center justify-center gap-4 text-center px-4">
           <p className="text-muted-foreground">{error}</p>
@@ -211,17 +206,8 @@ export function PlayerScreen({ book, onBack }: PlayerScreenProps) {
         </div>
       )}
 
-      {/* Delay message */}
-      {!loading && !error && delaying && (
-        <div className="flex-1 flex items-center justify-center">
-          <p className="text-muted-foreground text-lg font-medium animate-pulse">
-            Starting playback...
-          </p>
-        </div>
-      )}
-
-      {/* Player controls */}
-      {!loading && !error && !delaying && (
+      {/* Player */}
+      {!loading && !error && (
         <>
           <div className="flex-1" />
 
@@ -236,7 +222,14 @@ export function PlayerScreen({ book, onBack }: PlayerScreenProps) {
               </span>
             </div>
 
-            {/* Controls row */}
+            {/* Tap to begin hint — shown until first tap */}
+            {!hasStarted && (
+              <p className="text-sm text-muted-foreground animate-pulse -mb-4">
+                Tap play to begin
+              </p>
+            )}
+
+            {/* Controls */}
             <div className="flex items-center gap-6">
               <button
                 onClick={() => skipChapter("prev")}
@@ -252,7 +245,7 @@ export function PlayerScreen({ book, onBack }: PlayerScreenProps) {
               </button>
               <button
                 onClick={togglePlay}
-                className="w-20 h-20 rounded-full bg-primary flex items-center justify-center shadow-lg"
+                className="w-20 h-20 rounded-full bg-primary flex items-center justify-center shadow-lg active:scale-95 transition-transform"
               >
                 {isPlaying ? (
                   <Pause className="w-8 h-8 text-primary-foreground fill-current" />
@@ -275,7 +268,7 @@ export function PlayerScreen({ book, onBack }: PlayerScreenProps) {
             </div>
           </div>
 
-          {/* Timeline — elapsed=currentTime moves playhead, duration sizes the canvas */}
+          {/* Timeline */}
           <div className="pt-4 border-t border-border">
             <RecordingTimeline
               elapsed={currentTime}
