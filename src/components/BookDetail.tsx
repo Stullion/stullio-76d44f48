@@ -1,6 +1,7 @@
 import { Book } from "@/types/book";
 import { ArrowLeft, Play, Clock, BookOpen, Layers } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { warmUpAudioContext } from "@/lib/page-turn-sounds";
 
 interface BookDetailProps {
   book: Book;
@@ -16,6 +17,14 @@ function formatDuration(seconds: number): string {
 }
 
 export function BookDetail({ book, onBack, onPlay }: BookDetailProps) {
+  const handlePlay = () => {
+    // Warm up the AudioContext HERE, synchronously inside this user gesture,
+    // before the screen transition. By the time PlayerScreen mounts and
+    // timeupdate fires page-turn sounds, the context will already be "running".
+    warmUpAudioContext();
+    onPlay();
+  };
+
   return (
     <div className="flex flex-col h-full px-6 pt-6 pb-6">
       {/* Back button */}
@@ -64,7 +73,7 @@ export function BookDetail({ book, onBack, onPlay }: BookDetailProps) {
       {/* Play button */}
       <div className="flex-1" />
       <Button
-        onClick={onPlay}
+        onClick={handlePlay}
         className="w-full h-16 rounded-2xl text-xl font-bold shadow-lg gap-3"
         size="lg"
       >
