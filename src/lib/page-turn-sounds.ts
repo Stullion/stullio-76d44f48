@@ -1,10 +1,5 @@
 /**
- * page-turn-sounds.ts
- * Synthesizes page turn sounds via Web Audio API.
- *
- * KEY DESIGN: Uses a singleton AudioContext that must be resumed from a
- * user gesture. Call warmUpAudioContext() on any tap/click before playback
- * starts so the context is in "running" state when timeupdate fires sounds.
+ * page-turn-sounds.ts — with diagnostic logging
  */
 
 type SoundId = "soft-flip" | "gentle-chime" | "soft-pop" | "paper-rustle";
@@ -14,18 +9,20 @@ let _ctx: AudioContext | null = null;
 function getCtx(): AudioContext {
   if (!_ctx) {
     _ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+    console.log("[audio] AudioContext created, state:", _ctx.state);
   }
   return _ctx;
 }
 
-/**
- * Call this on any user gesture (e.g. the Play button tap) to ensure the
- * AudioContext is in "running" state before sounds need to fire automatically.
- */
 export function warmUpAudioContext(): void {
   const ctx = getCtx();
+  console.log("[audio] warmUpAudioContext called, state:", ctx.state);
   if (ctx.state === "suspended") {
-    ctx.resume().catch(() => {});
+    ctx.resume().then(() => {
+      console.log("[audio] AudioContext resumed, state now:", ctx.state);
+    }).catch((e) => {
+      console.error("[audio] AudioContext resume failed:", e);
+    });
   }
 }
 
@@ -107,24 +104,30 @@ export function playPageTurnSound(soundId: string, volumePct: number) {
   try {
     const ctx = getCtx();
     const volume = volumePct / 100;
+    console.log(`[audio] playPageTurnSound called — sound: ${soundId}, volume: ${volume}, ctx state: ${ctx.state}`);
 
     const play = () => {
+      console.log(`[audio] actually playing sound: ${soundId}`);
       switch (soundId as SoundId) {
         case "soft-flip":    playSoftFlip(ctx, volume); break;
         case "gentle-chime": playGentleChime(ctx, volume); break;
         case "soft-pop":     playSoftPop(ctx, volume); break;
         case "paper-rustle": playPaperRustle(ctx, volume); break;
-        default:             playSoftFlip(ctx, volume);
+        default:
+          console.log(`[audio] unknown soundId "${soundId}", falling back to soft-flip`);
+          playSoftFlip(ctx, volume);
       }
     };
 
     if (ctx.state === "running") {
       play();
     } else {
-      // Context not yet running — resume then play
-      ctx.resume().then(play).catch(() => {});
+      console.warn(`[audio] ctx not running (${ctx.state}), attempting resume before play`);
+      ctx.resume().then(play).catch((e) => {
+        console.error("[audio] resume failed:", e);
+      });
     }
   } catch (e) {
-    console.warn("Page turn sound failed:", e);
+    console.error("[audio] playPageTurnSound threw:", e);
   }
 }
