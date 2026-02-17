@@ -1,133 +1,57 @@
 /**
- * page-turn-sounds.ts — with diagnostic logging
+ * page-turn-sounds.ts
+ * Plays real audio files from public/sounds/ folder.
  */
 
 type SoundId = "soft-flip" | "gentle-chime" | "soft-pop" | "paper-rustle";
 
-let _ctx: AudioContext | null = null;
+// Pre-load all audio files into memory
+const audioCache = new Map<SoundId, HTMLAudioElement>();
 
-function getCtx(): AudioContext {
-  if (!_ctx) {
-    _ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
-    console.log("[audio] AudioContext created, state:", _ctx.state);
-  }
-  return _ctx;
+function loadSound(id: SoundId, filename: string): void {
+  const audio = new Audio(`/stullio-76d44f48/sounds/${filename}`);
+  audio.preload = "auto";
+  audioCache.set(id, audio);
 }
 
+// Initialize audio files on module load
+loadSound("soft-flip", "soft-flip.wav");
+loadSound("gentle-chime", "Bell.wav");
+loadSound("soft-pop", "soft-pop.wav");
+loadSound("paper-rustle", "paper-rustle.wav");
+
+/**
+ * Warm up audio context (no-op for HTMLAudioElement, but kept for API compatibility)
+ */
 export function warmUpAudioContext(): void {
-  const ctx = getCtx();
-  console.log("[audio] warmUpAudioContext called, state:", ctx.state);
-  if (ctx.state === "suspended") {
-    ctx.resume().then(() => {
-      console.log("[audio] AudioContext resumed, state now:", ctx.state);
-    }).catch((e) => {
-      console.error("[audio] AudioContext resume failed:", e);
-    });
-  }
+  // HTMLAudioElement doesn't need AudioContext warmup, but we keep this
+  // function for API compatibility with the rest of the app
+  console.log("[audio] warmUpAudioContext called (no-op for file-based sounds)");
 }
 
-function playSoftFlip(ctx: AudioContext, volume: number) {
-  const bufferSize = ctx.sampleRate * 0.12;
-  const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
-  const data = buffer.getChannelData(0);
-  for (let i = 0; i < bufferSize; i++) {
-    data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / bufferSize, 3);
-  }
-  const source = ctx.createBufferSource();
-  source.buffer = buffer;
-  const filter = ctx.createBiquadFilter();
-  filter.type = "bandpass";
-  filter.frequency.value = 2400;
-  filter.Q.value = 0.8;
-  const gain = ctx.createGain();
-  gain.gain.setValueAtTime(volume * 0.6, ctx.currentTime);
-  gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.12);
-  source.connect(filter);
-  filter.connect(gain);
-  gain.connect(ctx.destination);
-  source.start();
-}
-
-function playGentleChime(ctx: AudioContext, volume: number) {
-  const osc = ctx.createOscillator();
-  const gain = ctx.createGain();
-  osc.type = "sine";
-  osc.frequency.setValueAtTime(880, ctx.currentTime);
-  osc.frequency.exponentialRampToValueAtTime(660, ctx.currentTime + 0.3);
-  gain.gain.setValueAtTime(volume * 0.4, ctx.currentTime);
-  gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.5);
-  osc.connect(gain);
-  gain.connect(ctx.destination);
-  osc.start();
-  osc.stop(ctx.currentTime + 0.5);
-}
-
-function playSoftPop(ctx: AudioContext, volume: number) {
-  const osc = ctx.createOscillator();
-  const gain = ctx.createGain();
-  osc.type = "sine";
-  osc.frequency.setValueAtTime(200, ctx.currentTime);
-  osc.frequency.exponentialRampToValueAtTime(60, ctx.currentTime + 0.06);
-  gain.gain.setValueAtTime(volume * 0.5, ctx.currentTime);
-  gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.08);
-  osc.connect(gain);
-  gain.connect(ctx.destination);
-  osc.start();
-  osc.stop(ctx.currentTime + 0.1);
-}
-
-function playPaperRustle(ctx: AudioContext, volume: number) {
-  const bufferSize = ctx.sampleRate * 0.22;
-  const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
-  const data = buffer.getChannelData(0);
-  for (let i = 0; i < bufferSize; i++) {
-    const env =
-      i < bufferSize * 0.3
-        ? i / (bufferSize * 0.3)
-        : Math.pow(1 - (i - bufferSize * 0.3) / (bufferSize * 0.7), 2);
-    data[i] = (Math.random() * 2 - 1) * env;
-  }
-  const source = ctx.createBufferSource();
-  source.buffer = buffer;
-  const filter = ctx.createBiquadFilter();
-  filter.type = "highpass";
-  filter.frequency.value = 1800;
-  const gain = ctx.createGain();
-  gain.gain.setValueAtTime(volume * 0.45, ctx.currentTime);
-  source.connect(filter);
-  filter.connect(gain);
-  gain.connect(ctx.destination);
-  source.start();
-}
-
-export function playPageTurnSound(soundId: string, volumePct: number) {
+/**
+ * Play a page turn sound with volume control.
+ * @param soundId - One of: soft-flip, gentle-chime, soft-pop, paper-rustle
+ * @param volumePct - Volume 0-100
+ */
+export function playPageTurnSound(soundId: string, volumePct: number): void {
   try {
-    const ctx = getCtx();
-    const volume = volumePct / 100;
-    console.log(`[audio] playPageTurnSound called — sound: ${soundId}, volume: ${volume}, ctx state: ${ctx.state}`);
-
-    const play = () => {
-      console.log(`[audio] actually playing sound: ${soundId}`);
-      switch (soundId as SoundId) {
-        case "soft-flip":    playSoftFlip(ctx, volume); break;
-        case "gentle-chime": playGentleChime(ctx, volume); break;
-        case "soft-pop":     playSoftPop(ctx, volume); break;
-        case "paper-rustle": playPaperRustle(ctx, volume); break;
-        default:
-          console.log(`[audio] unknown soundId "${soundId}", falling back to soft-flip`);
-          playSoftFlip(ctx, volume);
-      }
-    };
-
-    if (ctx.state === "running") {
-      play();
-    } else {
-      console.warn(`[audio] ctx not running (${ctx.state}), attempting resume before play`);
-      ctx.resume().then(play).catch((e) => {
-        console.error("[audio] resume failed:", e);
-      });
+    const audio = audioCache.get(soundId as SoundId);
+    if (!audio) {
+      console.warn(`[audio] Unknown soundId: ${soundId}`);
+      return;
     }
+
+    // Clone the audio element so we can play overlapping sounds
+    const clone = audio.cloneNode() as HTMLAudioElement;
+    clone.volume = Math.max(0, Math.min(1, volumePct / 100));
+    
+    console.log(`[audio] Playing ${soundId} at ${volumePct}% volume`);
+    
+    clone.play().catch((e) => {
+      console.warn(`[audio] Failed to play ${soundId}:`, e);
+    });
   } catch (e) {
-    console.error("[audio] playPageTurnSound threw:", e);
+    console.error("[audio] playPageTurnSound error:", e);
   }
 }
