@@ -26,13 +26,16 @@ export function PlayerScreen({ book, onBack }: PlayerScreenProps) {
   const [currentTime, setCurrentTime] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [hasStarted, setHasStarted] = useState(false); // user has tapped play at least once
+  const [hasStarted, setHasStarted] = useState(false);
   const lastTimeRef = useRef<number>(-1);
+  // Guard against overlapping page-turn sound playback
+  const pageTurnActiveRef = useRef(false);
 
   // Load audio blob from IndexedDB directly onto the audio element
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
+
     let url: string | null = null;
 
     getAudioBlob(book.id)
@@ -68,16 +71,29 @@ export function PlayerScreen({ book, onBack }: PlayerScreenProps) {
       setCurrentTime(tFloor);
 
       const prev = lastTimeRef.current;
-      if (prev >= 0 && tFloor > prev) {
+      if (prev >= 0 && tFloor > prev && !pageTurnActiveRef.current) {
         const settings = getSettings();
-        book.markers
+        const triggered = book.markers
           .filter((m) => m.type === "page-turn")
-          .forEach((m) => {
-            if (m.timestamp > prev && m.timestamp <= tFloor) {
-              playPageTurnSound(book.pageTurnSound, settings.pageTurnVolume);
-            }
-          });
+          .find((m) => m.timestamp > prev && m.timestamp <= tFloor);
+
+        if (triggered) {
+          pageTurnActiveRef.current = true;
+          audio.pause();
+
+          playPageTurnSound(book.pageTurnSound, settings.pageTurnVolume)
+            .then(() => {
+              // Only resume if the user hasn't manually paused in the meantime
+              if (pageTurnActiveRef.current) {
+                audio.play().catch(() => {});
+              }
+            })
+            .finally(() => {
+              pageTurnActiveRef.current = false;
+            });
+        }
       }
+
       lastTimeRef.current = tFloor;
     };
 
@@ -85,13 +101,20 @@ export function PlayerScreen({ book, onBack }: PlayerScreenProps) {
       setIsPlaying(false);
       setCurrentTime(0);
       lastTimeRef.current = -1;
+      pageTurnActiveRef.current = false;
     };
 
     const onPlay = () => setIsPlaying(true);
-    const onPause = () => setIsPlaying(false);
+    const onPause = () => {
+      setIsPlaying(false);
+      // If the user manually pauses during a page-turn sound, cancel auto-resume
+      if (!pageTurnActiveRef.current) return;
+      pageTurnActiveRef.current = false;
+    };
     const onSeeked = () => {
       lastTimeRef.current = Math.floor(audio.currentTime) - 1;
       setCurrentTime(Math.floor(audio.currentTime));
+      pageTurnActiveRef.current = false;
     };
 
     audio.addEventListener("timeupdate", onTimeUpdate);
@@ -109,18 +132,13 @@ export function PlayerScreen({ book, onBack }: PlayerScreenProps) {
     };
   }, [book]);
 
-  // togglePlay is the ONLY place audio starts — always from a direct user tap
   const togglePlay = useCallback(() => {
     const audio = audioRef.current;
     if (!audio) return;
 
-    // Warm up AudioContext synchronously inside this gesture handler
-    // This MUST happen in the same call stack as the user tap
     warmUpAudioContext();
 
-    if (!hasStarted) {
-      setHasStarted(true);
-    }
+    if (!hasStarted) setHasStarted(true);
 
     if (audio.ended || audio.currentTime >= (audio.duration || 0)) {
       audio.currentTime = 0;
@@ -128,6 +146,9 @@ export function PlayerScreen({ book, onBack }: PlayerScreenProps) {
     }
 
     if (audio.paused) {
+      // If we're paused mid-page-turn-sound, just cancel the guard so
+      // the sound's .then() won't auto-resume
+      pageTurnActiveRef.current = false;
       audio.play().catch(() => {});
     } else {
       audio.pause();
@@ -169,7 +190,6 @@ export function PlayerScreen({ book, onBack }: PlayerScreenProps) {
 
   return (
     <div className="flex flex-col h-full bg-background px-6 pt-6 pb-6">
-      {/* Audio element always in the DOM */}
       <audio ref={audioRef} preload="auto" />
 
       {/* Header */}
@@ -210,7 +230,6 @@ export function PlayerScreen({ book, onBack }: PlayerScreenProps) {
       {!loading && !error && (
         <>
           <div className="flex-1" />
-
           <div className="flex flex-col items-center gap-8 mb-8">
             {/* Time display */}
             <div className="text-center">
@@ -222,7 +241,6 @@ export function PlayerScreen({ book, onBack }: PlayerScreenProps) {
               </span>
             </div>
 
-            {/* Tap to begin hint — shown until first tap */}
             {!hasStarted && (
               <p className="text-sm text-muted-foreground animate-pulse -mb-4">
                 Tap play to begin
