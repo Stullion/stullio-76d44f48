@@ -107,9 +107,10 @@ export function PlayerScreen({ book, onBack }: PlayerScreenProps) {
     const onPlay = () => setIsPlaying(true);
     const onPause = () => {
       setIsPlaying(false);
-      // If the user manually pauses during a page-turn sound, cancel auto-resume
-      if (!pageTurnActiveRef.current) return;
-      pageTurnActiveRef.current = false;
+      // Do NOT clear pageTurnActiveRef here — the pause may have been triggered
+      // programmatically by the page-turn logic itself. Clearing it here would
+      // prevent the .then() from resuming the recording.
+      // Manual pause cancellation is handled in togglePlay instead.
     };
     const onSeeked = () => {
       lastTimeRef.current = Math.floor(audio.currentTime) - 1;
@@ -146,11 +147,10 @@ export function PlayerScreen({ book, onBack }: PlayerScreenProps) {
     }
 
     if (audio.paused) {
-      // If we're paused mid-page-turn-sound, just cancel the guard so
-      // the sound's .then() won't auto-resume
-      pageTurnActiveRef.current = false;
       audio.play().catch(() => {});
     } else {
+      // User is manually pausing — cancel any pending page-turn auto-resume
+      pageTurnActiveRef.current = false;
       audio.pause();
     }
   }, [hasStarted]);
