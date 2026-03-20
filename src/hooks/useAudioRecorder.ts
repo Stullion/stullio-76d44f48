@@ -1,13 +1,10 @@
 /**
  * useAudioRecorder.ts
  * Wraps the browser MediaRecorder API for real microphone recording.
- * Returns start/stop/cancel controls and fires onComplete(blob) when done.
- *
- * IMPORTANT: start/stop/cancel have stable identities (never change) so they
- * are safe to use in useEffect dependency arrays without causing re-runs.
+ * Returns start/stop/cancel/pause/resume controls and fires onComplete(blob) when done.
  */
 
-import { useRef, useCallback, useEffect } from "react";
+import { useRef, useCallback } from "react";
 
 interface UseAudioRecorderOptions {
   onComplete: (blob: Blob) => void;
@@ -19,17 +16,7 @@ export function useAudioRecorder({ onComplete, onError }: UseAudioRecorderOption
   const chunksRef = useRef<Blob[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
 
-  // Keep callback refs up to date without changing the identity of start/stop/cancel
-  const onCompleteRef = useRef(onComplete);
-  const onErrorRef = useRef(onError);
-  useEffect(() => { onCompleteRef.current = onComplete; }, [onComplete]);
-  useEffect(() => { onErrorRef.current = onError; }, [onError]);
-
-  // start has NO deps — stable identity forever
   const start = useCallback(async () => {
-    // Guard against double-start
-    if (mediaRecorderRef.current) return;
-
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
@@ -55,13 +42,12 @@ export function useAudioRecorder({ onComplete, onError }: UseAudioRecorderOption
         const blob = new Blob(chunksRef.current, {
           type: mimeType || "audio/webm",
         });
-        // Release mic indicator
+        // Stop all microphone tracks to release the mic indicator
         stream.getTracks().forEach((t) => t.stop());
-        // Use the ref so we always call the latest version of onComplete
-        onCompleteRef.current(blob);
+        onComplete(blob);
       };
 
-      recorder.start(250); // collect chunks every 250ms
+      recorder.start(100); // collect data every 100ms for robustness
     } catch (err: any) {
       const msg =
         err?.name === "NotAllowedError"
@@ -69,29 +55,40 @@ export function useAudioRecorder({ onComplete, onError }: UseAudioRecorderOption
           : err?.name === "NotFoundError"
           ? "No microphone found. Please connect a microphone and try again."
           : `Could not start recording: ${err?.message ?? err}`;
-      onErrorRef.current(msg);
+      onError(msg);
     }
-  }, []); // intentionally empty — stable forever
+  }, [onComplete, onError]);
 
   const stop = useCallback(() => {
-    if (mediaRecorderRef.current?.state === "recording") {
+    if (mediaRecorderRef.current?.state === "recording" || mediaRecorderRef.current?.state === "paused") {
       mediaRecorderRef.current.stop();
+    }
+  }, []);
+
+  const pause = useCallback(() => {
+    if (mediaRecorderRef.current?.state === "recording") {
+      mediaRecorderRef.current.pause();
+    }
+  }, []);
+
+  const resume = useCallback(() => {
+    if (mediaRecorderRef.current?.state === "paused") {
+      mediaRecorderRef.current.resume();
     }
   }, []);
 
   const cancel = useCallback(() => {
     if (mediaRecorderRef.current) {
-      // Null out onstop so the blob callback never fires
+      // Remove onstop so the blob callback never fires
       mediaRecorderRef.current.onstop = null;
-      if (mediaRecorderRef.current.state === "recording") {
+      if (mediaRecorderRef.current.state === "recording" || mediaRecorderRef.current.state === "paused") {
         mediaRecorderRef.current.stop();
       }
-      mediaRecorderRef.current = null;
     }
+    // Release microphone immediately
     streamRef.current?.getTracks().forEach((t) => t.stop());
-    streamRef.current = null;
     chunksRef.current = [];
   }, []);
 
-  return { start, stop, cancel };
+  return { start, stop, pause, resume, cancel };
 }
