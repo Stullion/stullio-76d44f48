@@ -4,7 +4,6 @@ import { CountdownOverlay } from "@/components/CountdownOverlay";
 import { ActiveRecording } from "@/components/ActiveRecording";
 import { RecordingPhase, Marker } from "@/types/book";
 import { saveBook, generateId } from "@/lib/storage";
-import { saveAudioBlob } from "@/lib/audio-storage";
 
 interface RecordTabProps {
   onRecordingComplete: () => void;
@@ -31,10 +30,9 @@ export function RecordTab({ onRecordingComplete }: RecordTabProps) {
   }, []);
 
   const handleRecordingComplete = useCallback(
-    async (markers: Marker[], duration: number, audioBlob: Blob) => {
-      const id = generateId();
+    (markers: Marker[], duration: number) => {
       const book = {
-        id,
+        id: generateId(),
         title: bookName,
         thumbnail: coverPhoto,
         duration,
@@ -44,11 +42,7 @@ export function RecordTab({ onRecordingComplete }: RecordTabProps) {
         pageTurnSound,
         createdAt: Date.now(),
       };
-
-      // Save metadata to localStorage, audio blob to IndexedDB
       saveBook(book);
-      await saveAudioBlob(id, audioBlob);
-
       setPhase("setup");
       setBookName("");
       setCoverPhoto(null);
@@ -70,6 +64,7 @@ export function RecordTab({ onRecordingComplete }: RecordTabProps) {
   if (phase === "recording") {
     return (
       <ActiveRecording
+        pageTurnSound={pageTurnSound}
         onComplete={handleRecordingComplete}
         onCancel={handleCancel}
       />
