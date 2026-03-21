@@ -4,7 +4,7 @@ import { RecordingTimeline } from "@/components/RecordingTimeline";
 import { useAudioRecorder } from "@/hooks/useAudioRecorder";
 import { playPageTurnSound } from "@/lib/page-turn-sounds";
 import { getSettings } from "@/lib/storage";
-import { X } from "lucide-react";
+import { X, Loader2 } from "lucide-react";
 
 interface ActiveRecordingProps {
   pageTurnSound: string;
@@ -17,14 +17,18 @@ export function ActiveRecording({ pageTurnSound, onComplete, onCancel }: ActiveR
   const [markers, setMarkers] = useState<Marker[]>([]);
   const [isPaused, setIsPaused] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isStopping, setIsStopping] = useState(false);
   const intervalRef = useRef<number>();
-  const audioBlobRef = useRef<Blob | null>(null);
 
   const handleRecordingComplete = useCallback((blob: Blob) => {
-    audioBlobRef.current = blob;
-  }, []);
+    console.log("[recording] Audio blob received, size:", blob.size);
+    // Immediately pass blob to parent - don't wait
+    if (intervalRef.current) clearInterval(intervalRef.current);
+    onComplete(markers, elapsed, blob);
+  }, [markers, elapsed, onComplete]);
 
   const handleRecordingError = useCallback((err: string) => {
+    console.error("[recording] Error:", err);
     setError(err);
   }, []);
 
@@ -35,15 +39,17 @@ export function ActiveRecording({ pageTurnSound, onComplete, onCancel }: ActiveR
 
   // Start recording when component mounts
   useEffect(() => {
+    console.log("[recording] Starting MediaRecorder");
     start();
     return () => {
+      console.log("[recording] Component unmounting, canceling");
       cancel();
     };
   }, [start, cancel]);
 
   // Main timer
   useEffect(() => {
-    if (!isPaused) {
+    if (!isPaused && !isStopping) {
       intervalRef.current = window.setInterval(() => {
         setElapsed((prev) => prev + 1);
       }, 1000);
@@ -54,32 +60,25 @@ export function ActiveRecording({ pageTurnSound, onComplete, onCancel }: ActiveR
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
-  }, [isPaused]);
+  }, [isPaused, isStopping]);
 
   const addMarker = useCallback(
     (type: Marker["type"]) => {
       if (type === "page-turn") {
-        // Capture timestamp BEFORE pausing
         const timestamp = elapsed;
-        
-        // Pause both timer AND MediaRecorder
         setIsPaused(true);
         pause();
         
-        // Play sound effect during recording
         const settings = getSettings();
         playPageTurnSound(pageTurnSound, settings.pageTurnVolume);
         
-        // Add marker with pre-sound timestamp
         setMarkers((prev) => [...prev, { type, timestamp }]);
         
-        // Resume after 1 second (after sound finishes)
         setTimeout(() => {
           resume();
           setIsPaused(false);
         }, 1000);
       } else {
-        // Chapter markers don't need sound or pause
         setMarkers((prev) => [...prev, { type, timestamp: elapsed }]);
       }
     },
@@ -87,27 +86,11 @@ export function ActiveRecording({ pageTurnSound, onComplete, onCancel }: ActiveR
   );
 
   const handleEnd = useCallback(() => {
-    if (intervalRef.current) clearInterval(intervalRef.current);
-    
-    // Stop MediaRecorder and wait for blob
+    console.log("[recording] Stopping recording...");
+    setIsStopping(true);
     stop();
-    
-    // Poll for blob (onstop is async)
-    const checkBlob = setInterval(() => {
-      if (audioBlobRef.current) {
-        clearInterval(checkBlob);
-        onComplete(markers, elapsed, audioBlobRef.current);
-      }
-    }, 100);
-    
-    // Timeout after 3 seconds
-    setTimeout(() => {
-      clearInterval(checkBlob);
-      if (!audioBlobRef.current) {
-        setError("Recording timed out. Please try again.");
-      }
-    }, 3000);
-  }, [markers, elapsed, stop, onComplete]);
+    // handleRecordingComplete will be called by MediaRecorder's onstop
+  }, [stop]);
 
   const handleCancel = useCallback(() => {
     if (intervalRef.current) clearInterval(intervalRef.current);
@@ -138,6 +121,15 @@ export function ActiveRecording({ pageTurnSound, onComplete, onCancel }: ActiveR
     );
   }
 
+  if (isStopping) {
+    return (
+      <div className="flex flex-col h-full items-center justify-center gap-4">
+        <Loader2 className="w-12 h-12 text-primary animate-spin" />
+        <p className="text-muted-foreground">Saving recording...</p>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col h-full bg-background">
       {/* Top: Recording indicator + cancel */}
@@ -163,7 +155,6 @@ export function ActiveRecording({ pageTurnSound, onComplete, onCancel }: ActiveR
 
       {/* Middle: Three stacked buttons */}
       <div className="flex-1 flex flex-col items-center justify-center gap-4 px-6">
-        {/* Turn Page — Most prominent */}
         <button
           onClick={() => addMarker("page-turn")}
           disabled={isPaused}
@@ -176,7 +167,6 @@ export function ActiveRecording({ pageTurnSound, onComplete, onCancel }: ActiveR
           </div>
         </button>
 
-        {/* The End — Second */}
         <button
           onClick={handleEnd}
           className="rounded-2xl bg-accent text-accent-foreground font-bold text-xl shadow-md active:scale-95 transition-transform"
@@ -185,7 +175,6 @@ export function ActiveRecording({ pageTurnSound, onComplete, onCancel }: ActiveR
           The End
         </button>
 
-        {/* New Chapter — Least prominent */}
         <button
           onClick={() => addMarker("chapter")}
           className="rounded-2xl bg-secondary text-secondary-foreground font-semibold text-lg shadow-sm active:scale-95 transition-transform"
