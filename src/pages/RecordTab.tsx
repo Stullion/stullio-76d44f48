@@ -32,30 +32,43 @@ export function RecordTab({ onRecordingComplete }: RecordTabProps) {
 
   const handleRecordingComplete = useCallback(
     async (markers: Marker[], duration: number, audioBlob: Blob) => {
+      console.log("[RecordTab] Recording complete, blob size:", audioBlob.size);
       const bookId = generateId();
       
-      const book = {
-        id: bookId,
-        title: bookName,
-        thumbnail: coverPhoto,
-        duration,
-        pageTurns: markers.filter((m) => m.type === "page-turn").length,
-        chapters: markers.filter((m) => m.type === "chapter").length,
-        markers,
-        pageTurnSound,
-        createdAt: Date.now(),
-      };
-      
-      // Save metadata to localStorage
-      saveBook(book);
-      
-      // Save audio blob to IndexedDB
-      await saveAudioBlob(bookId, audioBlob);
-      
-      setPhase("setup");
-      setBookName("");
-      setCoverPhoto(null);
-      onRecordingComplete();
+      try {
+        // Save audio FIRST to IndexedDB
+        console.log("[RecordTab] Saving audio blob to IndexedDB with ID:", bookId);
+        await saveAudioBlob(bookId, audioBlob);
+        console.log("[RecordTab] Audio blob saved successfully");
+        
+        // THEN save metadata to localStorage with same ID
+        const book = {
+          id: bookId,
+          title: bookName,
+          thumbnail: coverPhoto,
+          duration,
+          pageTurns: markers.filter((m) => m.type === "page-turn").length,
+          chapters: markers.filter((m) => m.type === "chapter").length,
+          markers,
+          pageTurnSound,
+          createdAt: Date.now(),
+        };
+        
+        console.log("[RecordTab] Saving book metadata to localStorage");
+        saveBook(book);
+        console.log("[RecordTab] Book saved successfully");
+        
+        // Reset state
+        setPhase("setup");
+        setBookName("");
+        setCoverPhoto(null);
+        
+        // Notify parent
+        onRecordingComplete();
+      } catch (err) {
+        console.error("[RecordTab] Error saving recording:", err);
+        // TODO: Show error to user
+      }
     },
     [bookName, coverPhoto, pageTurnSound, onRecordingComplete]
   );
